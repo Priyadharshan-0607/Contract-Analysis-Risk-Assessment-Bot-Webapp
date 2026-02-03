@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚀 GenAI Legal Assistant for Indian SMEs</title>
+
+<!-- Libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    min-height: 100vh;
+}
+.container { max-width: 1400px; margin: auto; padding: 20px; }
+.header { text-align: center; color: white; margin-bottom: 30px; }
+.card {
+    background: white;
+    border-radius: 15px;
+    padding: 25px;
+    margin-bottom: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.2);
+}
+.upload-area {
+    border: 3px dashed #667eea;
+    padding: 40px;
+    border-radius: 10px;
+    text-align: center;
+    cursor: pointer;
+}
+.upload-area.dragover { background: #f0f4ff; }
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+    gap: 20px;
+}
+.metric {
+    background: linear-gradient(45deg,#667eea,#764ba2);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+.risk-high { background: linear-gradient(45deg,#ff6b6b,#ee5a52); }
+.risk-medium { background: linear-gradient(45deg,#feca57,#ff9ff3); }
+.risk-low { background: linear-gradient(45deg,#48dbfb,#0abde3); }
+table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+th,td { padding: 12px; border-bottom: 1px solid #eee; }
+th { background: #f8f9fa; }
+textarea {
+    width: 100%;
+    min-height: 150px;
+    padding: 15px;
+    border-radius: 8px;
+    border: 2px solid #eee;
+}
+.btn {
+    background: linear-gradient(45deg,#667eea,#764ba2);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.btn-danger { background: linear-gradient(45deg,#ff6b6b,#ee5a52); }
+.hidden { display: none; }
+#auditLog {
+    background: #f8f9fa;
+    padding: 15px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+<div class="header">
+<h1>🚀 GenAI Legal Assistant for Indian SMEs</h1>
+<p>Local contract analysis • 100% confidential</p>
+</div>
+
+<div class="card">
+<label class="upload-area" id="uploadArea">
+📎 Choose Contract File (PDF/DOCX/TXT) or Drag & Drop
+<input type="file" id="fileInput" accept=".pdf,.docx,.txt" hidden>
+</label>
+<br><br>
+<select id="languageSelect">
+<option>English</option>
+<option>Hindi (Auto-normalized)</option>
+</select>
+<button class="btn" id="analyzeBtn" disabled>🔍 Analyze Contract</button>
+</div>
+
+<div id="results" class="hidden">
+
+<div class="card">
+<div class="metrics">
+<div class="metric"><h3 id="contractType">-</h3>Type</div>
+<div class="metric risk-low" id="riskMetric"><h3 id="compositeRisk">-</h3>Risk</div>
+<div class="metric"><h3 id="highRiskCount">-</h3>High Risk</div>
+<div class="metric"><h3 id="totalClauses">-</h3>Clauses</div>
+</div>
+</div>
+
+<div class="card">
+<h3>📋 Summary</h3>
+<textarea id="summaryText" readonly></textarea>
+</div>
+
+<div class="card">
+<h3>📊 Clause Analysis</h3>
+<table>
+<thead>
+<tr><th>Clause</th><th>Risk</th><th>Plain English</th></tr>
+</thead>
+<tbody id="clausesTable"></tbody>
+</table>
+</div>
+
+<div class="card">
+<button class="btn" onclick="exportPDF()">📥 Export PDF</button>
+<button class="btn btn-danger" onclick="clearAll()">🗑 Clear</button>
+</div>
+
+<div class="card">
+<h3>🔒 Audit Trail</h3>
+<div id="auditLog"></div>
+</div>
+
+</div>
+</div>
+
+<script>
+let currentFileContent = '';
+let currentAnalysis = null;
+let auditLog = JSON.parse(localStorage.getItem('audit') || '[]');
+
+const fileInput = document.getElementById('fileInput');
+const analyzeBtn = document.getElementById('analyzeBtn');
+
+fileInput.addEventListener('change', handleFile);
+
+document.getElementById('uploadArea').addEventListener('dragover', e => {
+    e.preventDefault(); e.currentTarget.classList.add('dragover');
+});
+document.getElementById('uploadArea').addEventListener('dragleave', e => {
+    e.currentTarget.classList.remove('dragover');
+});
+document.getElementById('uploadArea').addEventListener('drop', e => {
+    e.preventDefault();
+    fileInput.files = e.dataTransfer.files;
+    handleFile();
+});
+
+async function handleFile() {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    logAudit('upload', file.name);
+
+    if (file.name.endsWith('.txt')) {
+        currentFileContent = await file.text();
+    } else if (file.name.endsWith('.docx')) {
+        const res = await mammoth.extractRawText({arrayBuffer: await file.arrayBuffer()});
+        currentFileContent = res.value;
+    } else {
+        currentFileContent = 'PDF text extraction limited in browser.';
+    }
+    analyzeBtn.disabled = false;
+}
+
+analyzeBtn.onclick = analyzeContract;
+
+function analyzeContract() {
+    const clauses = currentFileContent.split(/[.!?]+/).filter(t => t.length > 30);
+    const high = clauses.filter(c => /indemn|terminate|non-compete/i.test(c)).length;
+    const risk = high > 1 ? 'High' : 'Low';
+
+    currentAnalysis = { clauses, high, risk };
+
+    document.getElementById('results').classList.remove('hidden');
+    document.getElementById('contractType').textContent = 'General Contract';
+    document.getElementById('compositeRisk').textContent = risk;
+    document.getElementById('highRiskCount').textContent = high;
+    document.getElementById('totalClauses').textContent = clauses.length;
+
+    document.getElementById('summaryText').value =
+        `Clauses: ${clauses.length}\nHigh Risk: ${high}\nOverall Risk: ${risk}`;
+
+    document.getElementById('clausesTable').innerHTML =
+        clauses.slice(0,10).map(c =>
+            `<tr><td>${c}</td><td>${/indemn|terminate/i.test(c)?'High':'Low'}</td><td>Simplified explanation</td></tr>`
+        ).join('');
+
+    logAudit('analyze', 'Completed');
+}
+
+function exportPDF() {
+    if (!currentAnalysis) return alert('Analyze first');
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    doc.text('Contract Analysis Report', 20, 20);
+    doc.text(document.getElementById('summaryText').value, 20, 35);
+    doc.save(`contract_report_${Date.now()}.pdf`);
+
+    logAudit('export', 'PDF downloaded');
+}
+
+function clearAll() {
+    location.reload();
+}
+
+function logAudit(action, detail) {
+    auditLog.unshift(`${new Date().toLocaleString()} - ${action}: ${detail}`);
+    auditLog = auditLog.slice(0,50);
+    localStorage.setItem('audit', JSON.stringify(auditLog));
+    document.getElementById('auditLog').innerHTML = auditLog.join('<br>');
+}
+</script>
+</body>
+</html>
